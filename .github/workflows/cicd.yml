@@ -1,0 +1,73 @@
+name: CI/CD to OpenShift
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: shubhamdhole97/ocp-flask
+  K8S_APP: ocp-flask
+  K8S_NAMESPACE: shubhu9833-dev
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: vars
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Docker login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & push image
+        run: |
+          docker build -t "${IMAGE_NAME}:${{ steps.vars.outputs.SHORT_SHA }}" .
+          docker tag "${IMAGE_NAME}:${{ steps.vars.outputs.SHORT_SHA }}" "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:${{ steps.vars.outputs.SHORT_SHA }}"
+          docker push "${IMAGE_NAME}:latest"
+
+      # Install oc CLI
+      - name: Install oc
+        uses: redhat-actions/oc-installer@v1
+        with:
+          version: 'latest'
+
+      - name: OpenShift login
+        uses: redhat-actions/oc-login@v1
+        with:
+          openshift_server_url: ${{ secrets.OPENSHIFT_SERVER }}
+          openshift_token: ${{ secrets.OPENSHIFT_TOKEN }}
+          insecure_skip_tls_verify: true
+
+      - name: Select project/namespace
+        run: oc project "${K8S_NAMESPACE}"
+
+      # Apply manifests from k8s/ folder
+      - name: Apply K8s manifests
+        run: |
+          oc apply -f k8s/deployment.yaml -n "${K8S_NAMESPACE}"
+          oc apply -f k8s/service.yaml -n "${K8S_NAMESPACE}"
+          oc apply -f k8s/route.yaml -n "${K8S_NAMESPACE}"
+
+      - name: Update Deployment image
+        run: |
+          oc set image deploy/${K8S_APP} \
+            ${K8S_APP}="${IMAGE_NAME}:${{ steps.vars.outputs.SHORT_SHA }}" \
+            -n "${K8S_NAMESPACE}"
+
+      - name: Wait for rollout
+        run: oc rollout status deploy/${K8S_APP} -n "${K8S_NAMESPACE}" --timeout=180s
+
+      - name: Show public URL
+        run: |
+          echo "App URL:"
+          echo "http://$(oc get route ${K8S_APP} -n ${K8S_NAMESPACE} -o jsonpath='{.spec.host}')"
