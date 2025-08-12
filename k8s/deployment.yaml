@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocp-flask
+  labels:
+    app: ocp-flask
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ocp-flask
+  template:
+    metadata:
+      labels:
+        app: ocp-flask
+    spec:
+      containers:
+        - name: ocp-flask
+          # This will be updated in pipeline with oc set image
+          image: shubhamdhole97/ocp-flask:latest
+          imagePullPolicy: Always
+          env:
+            - name: PORT
+              value: "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
